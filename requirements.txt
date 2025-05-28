@@ -1,0 +1,7 @@
+# Core database connectivity
+mysql-connector-python>=8.0.32
+
+# Alternative MySQL driver (uncomment if preferred)
+# PyMySQL>=1.0.2
+
+# Python 3.7+ required for type hints and other features used
