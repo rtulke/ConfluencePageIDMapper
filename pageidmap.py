@@ -4,6 +4,7 @@ Confluence Page ID Mapper
 
 Converts page information to appropriate URL formats for Confluence Cloud migration.
 Supports both file-based and database-based input sources.
+Now includes nginx and apache rewrite rule generation.
 
 Author: Robert Tulke, rt@debian.sh
 """
@@ -174,7 +175,45 @@ def format_output_json(mappings: List[Dict[str, str]]) -> str:
     return json.dumps(mappings, indent=2, ensure_ascii=False)
 
 
-def output_results(mappings: List[Dict[str, str]], output_format: str, silent: bool) -> None:
+def format_output_nginx(mappings: List[Dict[str, str]], target_domain: str) -> str:
+    """Format output as nginx rewrite rules."""
+    lines = []
+    lines.append("# Nginx rewrite rules for Confluence Server/DC to Cloud migration")
+    lines.append(f"# Target domain: {target_domain}")
+    lines.append("")
+    
+    for mapping in mappings:
+        page_id = mapping['page_id']
+        url = mapping['url']
+        
+        # Handle different source URL patterns
+        lines.append(f"rewrite ^/pages/viewpage\\.action\\?pageId={page_id}$ https://{target_domain}{url} permanent;")
+        lines.append(f"rewrite ^/pages/viewpage\\.action\\?pageId={page_id}&.*$ https://{target_domain}{url} permanent;")
+    
+    return '\n'.join(lines)
+
+
+def format_output_apache(mappings: List[Dict[str, str]], target_domain: str) -> str:
+    """Format output as Apache rewrite rules."""
+    lines = []
+    lines.append("# Apache rewrite rules for Confluence Server/DC to Cloud migration")
+    lines.append(f"# Target domain: {target_domain}")
+    lines.append("# Add these rules to your Apache configuration or .htaccess")
+    lines.append("RewriteEngine On")
+    lines.append("")
+    
+    for mapping in mappings:
+        page_id = mapping['page_id']
+        url = mapping['url']
+        
+        # Handle pageId URLs with and without additional parameters
+        lines.append(f"RewriteRule ^pages/viewpage\\.action\\?pageId={page_id}$ https://{target_domain}{url} [R=301,L]")
+        lines.append(f"RewriteRule ^pages/viewpage\\.action\\?pageId={page_id}&.*$ https://{target_domain}{url} [R=301,L]")
+    
+    return '\n'.join(lines)
+
+
+def output_results(mappings: List[Dict[str, str]], output_format: str, silent: bool, target_domain: str = None) -> None:
     """Output results in specified format."""
     if not mappings and not silent:
         print("No URL mappings generated", file=sys.stderr)
@@ -184,6 +223,16 @@ def output_results(mappings: List[Dict[str, str]], output_format: str, silent: b
         result = format_output_json(mappings)
     elif output_format == 'csv':
         result = format_output_csv(mappings)
+    elif output_format == 'nginx':
+        if not target_domain:
+            print("Error: --target-domain required for nginx format", file=sys.stderr)
+            sys.exit(1)
+        result = format_output_nginx(mappings, target_domain)
+    elif output_format == 'apache':
+        if not target_domain:
+            print("Error: --target-domain required for apache format", file=sys.stderr)
+            sys.exit(1)
+        result = format_output_apache(mappings, target_domain)
     else:  # tsv (default)
         result = format_output_tsv(mappings)
     
@@ -276,6 +325,7 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
             result['processing'] = {
                 'default_spaces': proc_section.get('default_spaces', 'INFO').split(','),
                 'output_format': proc_section.get('output_format', 'tsv'),
+                'target_domain': proc_section.get('target_domain', ''),
                 'silent': proc_section.getboolean('silent', False)
             }
         
@@ -310,8 +360,10 @@ ssl_key = /path/to/client-key.pem
 [processing]
 # Default space keys (comma-separated)
 default_spaces = INFO,DOCS
-# Default output format: tsv, csv, json
+# Default output format: tsv, csv, json, nginx, apache
 output_format = tsv
+# Target domain for nginx/apache rewrites (required for nginx/apache formats)
+target_domain = company.atlassian.net
 # Silent mode (no stderr output)
 silent = false
 """
@@ -341,12 +393,14 @@ def setup_ssl_config(db_config: Dict[str, Any], args: argparse.Namespace) -> Non
 def main() -> None:
     """Main entry point following Python Zen principles."""
     parser = argparse.ArgumentParser(
-        description="Convert Confluence page data to URL mappings",
+        description="Convert Confluence page data to URL mappings or server rewrite rules",
         epilog="Examples:\n"
                "  %(prog)s -f pages.txt --output-format json\n"
                "  %(prog)s -d localhost:3306/confluence -s INFO,DOCS\n"
                "  %(prog)s -c config.ini --silent --output-format csv\n"
-               "  %(prog)s --generate-config > pageidmap.ini",
+               "  %(prog)s --generate-config > pageidmap.ini\n"
+               "  %(prog)s -f pages.txt --output-format nginx --target-domain company.atlassian.net\n"
+               "  %(prog)s -d localhost:3306/confluence -s INFO --output-format apache --target-domain company.atlassian.net",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -383,9 +437,14 @@ def main() -> None:
     )
     parser.add_argument(
         '--output-format',
-        choices=['tsv', 'csv', 'json'],
+        choices=['tsv', 'csv', 'json', 'nginx', 'apache'],
         default='tsv',
         help='Output format (default: tsv)'
+    )
+    parser.add_argument(
+        '--target-domain',
+        metavar='DOMAIN',
+        help='Target domain for nginx/apache rewrites (e.g., company.atlassian.net)'
     )
     parser.add_argument(
         '--silent',
@@ -494,16 +553,20 @@ def main() -> None:
                     url = result.split('\t', 1)[1]  # Extract URL part
                     mappings.append({'page_id': page_id, 'url': url})
         
-        # Determine output format
+        # Determine output format and target domain
         output_format = args.output_format
+        target_domain = args.target_domain
+        
         if config_data.get('processing', {}).get('output_format'):
             output_format = config_data['processing']['output_format']
+        if config_data.get('processing', {}).get('target_domain'):
+            target_domain = config_data['processing']['target_domain']
         
         # Determine silent mode
         silent = args.silent or config_data.get('processing', {}).get('silent', False)
         
         # Output results
-        output_results(mappings, output_format, silent)
+        output_results(mappings, output_format, silent, target_domain)
         
         if args.verbose and not silent:
             print(f"Generated {len(mappings)} URL mappings", file=sys.stderr)
