@@ -289,14 +289,6 @@ python3 pageidmap.py -d host/db -s "INFO, DOCS, HELP"  # Also works
 python3 pageidmap.py -d secure-host:3306/db --ssl-verify false -s INFO -v
 ```
 
-## Development
-
-The code follows Python Zen principles:
-- **Simple is better than complex**: Functional approach instead of classes
-- **Flat is better than nested**: Minimal nesting levels
-- **Explicit is better than implicit**: Clear function names and parameters
-- **Readability counts**: Well-documented functions with type hints
-
 ### Testing Configuration
 
 ```bash
@@ -319,7 +311,3 @@ except Exception as e:
     print(f'Connection failed: {e}')
 "
 ```
-
-## License
-
-This tool is provided as-is for Confluence migration purposes.
