@@ -1,6 +1,6 @@
 # Confluence Page ID Mapper
 
-A Python tool for converting Confluence page information to appropriate URL formats for Cloud migration. Supports multiple input sources, output formats, and SSL/TLS database connections.
+A Python tool for converting Atlassian Confluence page information to appropriate URL formats for Cloud migration. Supports multiple input sources, output formats, and SSL/TLS database connections.
 
 ## Description
 
