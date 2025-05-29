@@ -16,7 +16,7 @@ This script processes page data and generates URL mappings based on title charac
 - **Multiple Space Keys**: Process multiple Confluence spaces simultaneously
 - **Output Formats**: TSV (default), CSV, JSON, **Nginx rewrite rules**, **Apache rewrite rules**
 - **SSL/TLS Support**: Secure database connections
-- **Configuration Files**: INI-based configuration
+- **Configuration Files**: INI/Conf-based configuration
 - **Silent Mode**: No terminal output (requires output format)
 - **Migration Support**: Server/DC to Cloud URL migration with proper redirects
 
@@ -43,12 +43,13 @@ sudo apt install -y python3-mysql.connector python3-psycopg2 python3-dev python3
 
 **Package Mapping Table**
 
- | requirements.txt               | Debian APT Paket                   |
- | :----------------------------- | :--------------------------------- |
- | mysql-connector-python>=8.0.32 | python3-mysql.connector            |
- | psycopg2-binary>=2.9.5         | python3-psycopg2                   |
- | PyMySQL>=1.0.2                 | python3-pymysql                    |
- | psycopg3>=3.1.0                | X (currently not in debian stable) |
+ | requirements.txt               | Debian APT Paket                   | Database Type |
+ | :----------------------------- | :--------------------------------- | ------------- |
+ | psycopg2-binary>=2.9.5         | python3-psycopg2                   | PostgreSQL    |
+ | psycopg3>=3.1.0                | X (currently not in debian stable) | PostgreSQL    |
+ | PyMySQL>=1.0.2                 | python3-pymysql                    | MySQL/MariaDB |
+ | mysql-connector-python>=8.0.32 | python3-mysql.connector            | MySQL/MariaDB |
+
 
 **Possible problems**
 - Outdated versions: Debian stable often has older versions
@@ -91,15 +92,15 @@ python3 pageidmap.py -f pages.txt --output-format json
 python3 pageidmap.py -d localhost:3306/confluence -s INFO,DOCS,HELP
 
 # Using configuration file
-python3 pageidmap.py -c config.ini --silent --output-format csv > output.csv
+python3 pageidmap.py -c config.conf --silent --output-format csv > output.csv
 
 # Generate default configuration
-python3 pageidmap.py --generate-config > pageidmap.ini
+python3 pageidmap.py --generate-config > pageidmap.conf
 
 # Generate nginx rewrite rules for migration
 python3 pageidmap.py -f pages.txt --output-format nginx --target-domain company.atlassian.net > nginx_rewrites.conf
 
-# Generate Apache rewrite rules from database
+# Generate Apache rewrite rules for migration
 python3 pageidmap.py -d localhost:3306/confluence -s INFO,DOCS --output-format apache --target-domain company.atlassian.net > apache_rewrites.conf
 ```
 
@@ -132,10 +133,10 @@ python3 pageidmap.py -d localhost:3306/confluence -s INFO,DOCS --output-format a
 Generate a default configuration:
 
 ```bash
-python3 pageidmap.py --generate-config > pageidmap.ini
+python3 pageidmap.py --generate-config > pageidmap.conf
 ```
 
-Example configuration file (`pageidmap.ini`):
+Example configuration file (`pageidmap.conf`):
 
 ```ini
 [database]
@@ -253,7 +254,7 @@ python3 pageidmap.py -d secure-db:3306/confluence \
   --target-domain company.atlassian.net > migration_apache.conf
 
 # Process multiple spaces silently with nginx output
-python3 pageidmap.py -c config.ini \
+python3 pageidmap.py -c config.conf \
   --silent \
   --output-format nginx > /etc/nginx/conf.d/confluence_migration.conf
 ```
@@ -268,9 +269,9 @@ python3 pageidmap.py -d localhost:3306/confluence \
   --target-domain company.atlassian.net > nginx-rules.conf
 
 # Using configuration file for multiple spaces
-echo "default_spaces = INFO,DOCS,HELP,KB,SUPPORT" >> config.ini
-echo "target_domain = company.atlassian.net" >> config.ini
-python3 pageidmap.py -c config.ini --output-format apache > apache-rules.conf
+echo "default_spaces = INFO,DOCS,HELP,KB,SUPPORT" >> config.conf
+echo "target_domain = company.atlassian.net" >> config.conf
+python3 pageidmap.py -c config.conf --output-format apache > apache-rules.conf
 ```
 
 ### SSL/TLS Database Connections
@@ -285,7 +286,7 @@ python3 pageidmap.py -d secure-db.company.com:3306/confluence \
   --target-domain company.atlassian.net
 
 # Using configuration file for SSL with Apache output
-cat > secure-config.ini << EOF
+cat > secure-config.conf << EOF
 [database]
 host = secure-db.company.com
 port = 3306
@@ -302,7 +303,7 @@ target_domain = company.atlassian.net
 output_format = apache
 EOF
 
-python3 pageidmap.py -c secure-config.ini > apache-migration-rules.conf
+python3 pageidmap.py -c secure-config.conf > apache-migration-rules.conf
 ```
 
 ### Silent Processing with Output Redirection
@@ -319,7 +320,7 @@ python3 pageidmap.py -d localhost/confluence \
   --target-domain company.atlassian.net > nginx-migration-rules.conf
 
 # Error handling in silent mode for Apache rules
-if ! python3 pageidmap.py -c config.ini --silent --output-format apache > apache-rules.conf; then
+if ! python3 pageidmap.py -c config.conf --silent --output-format apache > apache-rules.conf; then
     echo "Processing failed" >&2
     exit 1
 fi
@@ -447,7 +448,7 @@ python3 pageidmap.py -d secure-host:3306/db --ssl-verify false -s INFO -v --outp
 
 ```bash
 # Test configuration generation
-python3 pageidmap.py --generate-config > test-config.ini
+python3 pageidmap.py --generate-config > test-config.conf
 
 # Test file processing with nginx output
 echo -e "123\tINFO\tTest & Title\n456\tDOCS\tNormal Title" > test.txt
