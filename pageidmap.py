@@ -17,8 +17,21 @@ import configparser
 from typing import Optional, Tuple, Iterator, List, Dict, Any
 from urllib.parse import quote
 from pathlib import Path
-import mysql.connector
-from mysql.connector import Error as MySQLError
+try:
+    import mysql.connector
+    from mysql.connector import Error as MySQLError
+    MYSQL_AVAILABLE = True
+except ImportError:
+    MYSQL_AVAILABLE = False
+    MySQLError = Exception
+
+try:
+    import psycopg2
+    from psycopg2 import Error as PostgreSQLError
+    POSTGRESQL_AVAILABLE = True
+except ImportError:
+    POSTGRESQL_AVAILABLE = False
+    PostgreSQLError = Exception
 
 
 # Compiled regex patterns for performance
@@ -98,25 +111,129 @@ def process_file_source(filename: str, silent: bool = False) -> Iterator[Tuple[s
         sys.exit(1)
 
 
-def create_db_connection(config: Dict[str, Any]) -> mysql.connector.MySQLConnection:
-    """Create database connection with SSL support."""
-    try:
-        connection = mysql.connector.connect(**config)
-        return connection
-    except MySQLError as e:
-        print(f"Database connection error: {e}", file=sys.stderr)
-        sys.exit(1)
+def get_default_port(db_type: str) -> int:
+    """Get default port for database type."""
+    ports = {
+        'mysql': 3306,
+        'mariadb': 3306,
+        'postgresql': 5432,
+        'postgres': 5432
+    }
+    return ports.get(db_type.lower(), 3306)
+
+
+def detect_db_type(connection_string: str) -> str:
+    """Detect database type from connection string."""
+    if connection_string.startswith(('postgresql://', 'postgres://')):
+        return 'postgresql'
+    elif connection_string.startswith('mysql://'):
+        return 'mysql'
+    else:
+        # Default to mysql for backward compatibility
+        return 'mysql'
+
+
+def map_ssl_config(db_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Map SSL configuration between database types."""
+    if db_type.lower() in ['postgresql', 'postgres']:
+        # PostgreSQL SSL mapping
+        ssl_config = {}
+        
+        if config.get('ssl_disabled') is False or config.get('ssl_enabled'):
+            ssl_config['sslmode'] = 'require'
+            
+            if config.get('ssl_ca'):
+                ssl_config['sslrootcert'] = config['ssl_ca']
+                ssl_config['sslmode'] = 'verify-ca'
+            
+            if config.get('ssl_cert'):
+                ssl_config['sslcert'] = config['ssl_cert']
+            
+            if config.get('ssl_key'):
+                ssl_config['sslkey'] = config['ssl_key']
+            
+            if config.get('ssl_verify_cert') is False:
+                ssl_config['sslmode'] = 'require'
+        else:
+            ssl_config['sslmode'] = 'disable'
+        
+        return ssl_config
+    
+    else:
+        # MySQL/MariaDB SSL mapping (keep existing format)
+        return {k: v for k, v in config.items() 
+                if k.startswith('ssl_') or k in ['ssl_disabled']}
+
+
+def create_db_connection(config: Dict[str, Any]) -> Any:
+    """Create database connection with multi-database support."""
+    db_type = config.get('db_type', 'mysql').lower()
+    
+    if db_type in ['postgresql', 'postgres']:
+        if not POSTGRESQL_AVAILABLE:
+            print("Error: psycopg2 not available. Install with: pip install psycopg2-binary", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            # Prepare PostgreSQL connection parameters
+            pg_config = {
+                'host': config['host'],
+                'port': config['port'],
+                'database': config['database'],
+                'user': config['user'],
+                'password': config['password']
+            }
+            
+            # Add SSL configuration
+            ssl_config = map_ssl_config(db_type, config)
+            pg_config.update(ssl_config)
+            
+            # Remove None values
+            pg_config = {k: v for k, v in pg_config.items() if v is not None}
+            
+            connection = psycopg2.connect(**pg_config)
+            return connection
+            
+        except PostgreSQLError as e:
+            print(f"PostgreSQL connection error: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    else:
+        # MySQL/MariaDB (existing logic)
+        if not MYSQL_AVAILABLE:
+            print("Error: mysql-connector-python not available. Install with: pip install mysql-connector-python", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            connection = mysql.connector.connect(**config)
+            return connection
+        except MySQLError as e:
+            print(f"MySQL/MariaDB connection error: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 def process_database_source(db_config: Dict[str, Any], space_keys: List[str]) -> Iterator[Tuple[str, str, str]]:
-    """Process database-based input source."""
+    """Process database-based input source with multi-database support."""
     connection = None
+    cursor = None
+    db_type = db_config.get('db_type', 'mysql').lower()
+    
     try:
         connection = create_db_connection(db_config)
-        cursor = connection.cursor(buffered=True)
+        
+        if db_type in ['postgresql', 'postgres']:
+            cursor = connection.cursor()
+        else:
+            cursor = connection.cursor(buffered=True)
         
         # Build IN clause for multiple space keys
-        placeholders = ','.join(['%s'] * len(space_keys))
+        if db_type in ['postgresql', 'postgres']:
+            # PostgreSQL uses %s for all parameter types
+            placeholders = ','.join(['%s'] * len(space_keys))
+        else:
+            # MySQL/MariaDB
+            placeholders = ','.join(['%s'] * len(space_keys))
+        
         query = f"""
         SELECT CONTENTID, SPACEKEY, TITLE 
         FROM CONTENT 
@@ -134,17 +251,20 @@ def process_database_source(db_config: Dict[str, Any], space_keys: List[str]) ->
             page_id = str(content_id)
             yield page_id, db_space_key, title
         
-        cursor.close()
-        
-    except MySQLError as e:
+    except (MySQLError, PostgreSQLError) as e:
         print(f"Database error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        if connection and connection.is_connected():
-            connection.close()
+        if cursor:
+            cursor.close()
+        if connection:
+            if db_type in ['postgresql', 'postgres']:
+                connection.close()
+            elif hasattr(connection, 'is_connected') and connection.is_connected():
+                connection.close()
 
 
 def format_output_tsv(mappings: List[Dict[str, str]]) -> str:
@@ -243,27 +363,60 @@ def output_results(mappings: List[Dict[str, str]], output_format: str, silent: b
 
 
 def parse_database_string(db_string: str) -> Dict[str, Any]:
-    """Parse database connection string."""
+    """Parse database connection string with multi-database support."""
     try:
-        if '/' not in db_string:
-            raise ValueError("Database string must contain database name")
+        # Detect database type
+        db_type = detect_db_type(db_string)
         
-        host_port, database = db_string.rsplit('/', 1)
+        # Handle URL-style connection strings
+        if '://' in db_string:
+            # postgresql://user:pass@host:port/database
+            # mysql://user:pass@host:port/database
+            from urllib.parse import urlparse
+            
+            parsed = urlparse(db_string)
+            
+            return {
+                'db_type': parsed.scheme.lower(),
+                'host': parsed.hostname or 'localhost',
+                'port': parsed.port or get_default_port(parsed.scheme),
+                'database': parsed.path.lstrip('/') if parsed.path else '',
+                'user': parsed.username or '',
+                'password': parsed.password or '',
+                'charset': 'utf8mb4' if parsed.scheme.lower() in ['mysql', 'mariadb'] else None,
+                'collation': 'utf8mb4_unicode_ci' if parsed.scheme.lower() in ['mysql', 'mariadb'] else None
+            }
         
-        if ':' in host_port:
-            host, port_str = host_port.split(':', 1)
-            port = int(port_str)
         else:
-            host = host_port
-            port = 3306
-        
-        return {
-            'host': host,
-            'port': port,
-            'database': database,
-            'charset': 'utf8mb4',
-            'collation': 'utf8mb4_unicode_ci'
-        }
+            # Legacy format: host:port/database
+            if '/' not in db_string:
+                raise ValueError("Database string must contain database name")
+            
+            host_port, database = db_string.rsplit('/', 1)
+            
+            if ':' in host_port:
+                host, port_str = host_port.split(':', 1)
+                port = int(port_str)
+            else:
+                host = host_port
+                port = get_default_port(db_type)
+            
+            config = {
+                'db_type': db_type,
+                'host': host,
+                'port': port,
+                'database': database
+            }
+            
+            # Add MySQL-specific parameters for backward compatibility
+            if db_type in ['mysql', 'mariadb']:
+                config.update({
+                    'charset': 'utf8mb4',
+                    'collation': 'utf8mb4_unicode_ci'
+                })
+            
+            return config
+            
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid database string format: {e}")
 
@@ -294,8 +447,9 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
         if 'database' in config:
             db_section = config['database']
             result['database'] = {
+                'db_type': db_section.get('db_type', 'mysql').lower(),
                 'host': db_section.get('host', 'localhost'),
-                'port': db_section.getint('port', 3306),
+                'port': db_section.getint('port', None),  # Will be set by get_default_port if None
                 'database': db_section.get('database', ''),
                 'user': db_section.get('user', ''),
                 'password': db_section.get('password', ''),
@@ -303,9 +457,14 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
                 'collation': db_section.get('collation', 'utf8mb4_unicode_ci')
             }
             
+            # Set default port based on database type if not specified
+            if result['database']['port'] is None:
+                result['database']['port'] = get_default_port(result['database']['db_type'])
+            
             # SSL settings
             if db_section.getboolean('ssl_enabled', False):
                 result['database'].update({
+                    'ssl_enabled': True,
                     'ssl_disabled': False,
                     'ssl_verify_cert': db_section.getboolean('ssl_verify_cert', True),
                     'ssl_verify_identity': db_section.getboolean('ssl_verify_identity', True),
@@ -318,6 +477,8 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
                 for ssl_key in ['ssl_ca', 'ssl_cert', 'ssl_key']:
                     if not result['database'][ssl_key]:
                         del result['database'][ssl_key]
+            else:
+                result['database']['ssl_disabled'] = True
         
         # Processing section
         if 'processing' in config:
@@ -342,9 +503,13 @@ def generate_default_config() -> str:
 # This file uses INI format with sections
 
 [database]
+# Database type: mysql, mariadb, postgresql
+# Determines connection driver and default port
+db_type = mysql
+
 # Database connection settings
 host = localhost
-port = 3306
+# port = 3306  # Will auto-detect based on db_type (MySQL/MariaDB: 3306, PostgreSQL: 5432)
 database = confluence
 user = confluence_user
 password = 
@@ -353,9 +518,17 @@ password =
 ssl_enabled = false
 ssl_verify_cert = true
 ssl_verify_identity = true
+
+# SSL certificate paths (MySQL/MariaDB format)
 ssl_ca = /path/to/ca-cert.pem
 ssl_cert = /path/to/client-cert.pem
 ssl_key = /path/to/client-key.pem
+
+# For PostgreSQL, these become:
+# ssl_ca -> sslrootcert
+# ssl_cert -> sslcert  
+# ssl_key -> sslkey
+# ssl_verify_cert -> controls sslmode (require vs verify-ca)
 
 [processing]
 # Default space keys (comma-separated)
@@ -397,10 +570,12 @@ def main() -> None:
         epilog="Examples:\n"
                "  %(prog)s -f pages.txt --output-format json\n"
                "  %(prog)s -d localhost:3306/confluence -s INFO,DOCS\n"
+               "  %(prog)s -d postgresql://localhost:5432/confluence -s INFO,DOCS\n"
                "  %(prog)s -c config.ini --silent --output-format csv\n"
                "  %(prog)s --generate-config > pageidmap.ini\n"
                "  %(prog)s -f pages.txt --output-format nginx --target-domain company.atlassian.net\n"
-               "  %(prog)s -d localhost:3306/confluence -s INFO --output-format apache --target-domain company.atlassian.net",
+               "  %(prog)s -d mysql://localhost:3306/confluence -s INFO --output-format apache --target-domain company.atlassian.net\n"
+               "  %(prog)s -d postgresql://user@localhost/confluence -s INFO --output-format nginx --target-domain company.atlassian.net",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -413,8 +588,8 @@ def main() -> None:
     )
     source_group.add_argument(
         '-d', '--database',
-        metavar='HOST:PORT/DATABASE',
-        help='Database connection string'
+        metavar='CONNECTION_STRING',
+        help='Database connection string. Formats: host:port/database, mysql://host:port/database, postgresql://host:port/database'
     )
     
     # Configuration
