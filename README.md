@@ -43,11 +43,11 @@ sudo apt install -y python3-mysql.connector python3-psycopg2 python3-dev python3
 
 **Package Mapping Table**
 
-|requirements.txt|Debian APT Paket|
-|mysql-connector-python>=8.0.32|python3-mysql.connector|
-|psycopg2-binary>=2.9.5|python3-psycopg2|
-|PyMySQL>=1.0.2|python3-pymysql|
-|psycopg3>=3.1.0|X (currently not in debian stable)|
+| requirements.txt |Debian APT Paket |
+| mysql-connector-python>=8.0.32 |python3-mysql.connector |
+| psycopg2-binary>=2.9.5 | python3-psycopg2 |
+| PyMySQL>=1.0.2 | python3-pymysql |
+| psycopg3>=3.1.0 | X (currently not in debian stable) |
 
 **Possible problems**
 - Outdated versions: Debian stable often has older versions
