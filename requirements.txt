@@ -1,7 +1,15 @@
 # Core database connectivity
+# MySQL/MariaDB support
 mysql-connector-python>=8.0.32
 
-# Alternative MySQL driver (uncomment if preferred)
+# PostgreSQL support
+psycopg2-binary>=2.9.5
+
+# Alternative drivers (uncomment if preferred)
 # PyMySQL>=1.0.2
+# psycopg3>=3.1.0
 
 # Python 3.7+ required for type hints and other features used
+
+# Optional: For URL parsing in database connection strings
+# urllib3>=1.26.0  # Already included with requests/urllib
