@@ -27,7 +27,46 @@ This script processes page data and generates URL mappings based on title charac
 
 ## Installation
 
-### Virtual Environment Setup
+### Debian based OS
+For the most Debian apt based Linux Distributions e.g. Debian, Ubuntu, Linux Mint, Raspberry PI ... 
+
+```bash
+sudo apt update
+sudo apt install -y python3-mysql.connector python3-psycopg2 python3-dev python3-setuptools
+
+# Optional: Alternative drivers
+# sudo apt install -y python3-pymysql
+
+# Development tools (for compilation required)  
+# sudo apt install -y build-essential libmariadb-dev libpq-dev
+```
+
+**Package Mapping Table**
+
+|requirements.txt|Debian APT Paket|
+|mysql-connector-python>=8.0.32|python3-mysql.connector|
+|psycopg2-binary>=2.9.5|python3-psycopg2|
+|PyMySQL>=1.0.2|python3-pymysql|
+|psycopg3>=3.1.0|X (currently not in debian stable)|
+
+**Possible problems**
+- Outdated versions: Debian stable often has older versions
+- psycopg3: Not in Debian repos, only installable via pip
+- mysql-connector-python: Sometimes not the latest version
+
+### Debian Hybrid Setup
+
+```bash
+# System-Packages for Dependencies
+sudo apt install -y python3-dev python3-pip python3-venv libmariadb-dev libpq-dev build-essential
+
+# Virtual Environment with pip for newer Versions
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Python Virtual Environment Setup (recommended)
 
 ```bash
 # Create and activate virtual environment
